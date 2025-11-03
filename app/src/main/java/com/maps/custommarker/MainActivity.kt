@@ -9,6 +9,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
@@ -18,30 +19,31 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
-import com.google.android.gms.location.LocationServices
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.android.gms.maps.model.BitmapDescriptor
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
-import kotlin.random.Random
 
 data class MarkerData(val position: LatLng, val title: String, val iconRes: Int)
 
 class MainActivity : ComponentActivity() {
+
+    private val viewModel: MapViewModel by viewModels()
 
     private val locationPermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         when {
             permissions.getOrDefault(Manifest.permission.ACCESS_FINE_LOCATION, false) -> {
-                // Precise location access granted.
+                viewModel.onPermissionGranted()
             }
             permissions.getOrDefault(Manifest.permission.ACCESS_COARSE_LOCATION, false) -> {
-                // Only approximate location access granted.
+                viewModel.onPermissionGranted()
             }
             else -> {
-                // No location access granted.
+                viewModel.onPermissionDenied()
             }
         }
     }
@@ -52,36 +54,25 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION))
         setContent {
-            MapScreen()
+            MapScreen(viewModel)
         }
     }
 }
 
 @SuppressLint("MissingPermission")
 @Composable
-fun MapScreen() {
+fun MapScreen(viewModel: MapViewModel = viewModel()) {
     val context = LocalContext.current
-    var userLocation by remember { mutableStateOf<LatLng?>(null) }
-    var markers by remember { mutableStateOf<List<MarkerData>>(emptyList()) }
-    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
-
-    LaunchedEffect(Unit) {
-        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-            if (location != null) {
-                val latLng = LatLng(location.latitude, location.longitude)
-                userLocation = latLng
-                markers = generateRandomMarkers(latLng)
-            }
-        }
-    }
+    val state by viewModel.state.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (userLocation == null) {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-        } else {
-            userLocation?.let { location ->
+        when (val mapState = state) {
+            is MapState.Loading -> {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+            is MapState.Success -> {
                 val cameraPositionState = rememberCameraPositionState {
-                    position = CameraPosition.fromLatLngZoom(location, 12f)
+                    position = CameraPosition.fromLatLngZoom(mapState.userLocation, 12f)
                 }
 
                 GoogleMap(
@@ -90,12 +81,12 @@ fun MapScreen() {
                     uiSettings = MapUiSettings(zoomControlsEnabled = true)
                 ) {
                     Marker(
-                        state = MarkerState(position = location),
+                        state = MarkerState(position = mapState.userLocation),
                         title = "You are here",
                         icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)
                     )
 
-                    markers.forEach { markerData ->
+                    mapState.markers.forEach { markerData ->
                         Marker(
                             state = MarkerState(position = markerData.position),
                             title = markerData.title,
@@ -104,31 +95,10 @@ fun MapScreen() {
                     }
                 }
             }
+            is MapState.Error -> {
+                Text(text = "Location permission denied. Please enable it in settings.", modifier = Modifier.align(Alignment.Center))
+            }
         }
-    }
-}
-
-private fun generateRandomMarkers(center: LatLng): List<MarkerData> {
-    val markerCategories = listOf(
-        "Tire Shop" to R.drawable.ic_tire_shop,
-        "Pharmacy/Capsule" to R.drawable.ic_pharmacy,
-        "General Store" to R.drawable.ic_general_store,
-        "Restaurant" to R.drawable.ic_restaurant,
-        "Meat Shop" to R.drawable.ic_meat_shop
-    )
-
-    return markerCategories.map { (title, iconRes) ->
-        val randomLatLng = center.let {
-            val radius = 1000 + Random.nextDouble(0.0, 1000.0) // 1-2 km
-            val angle = Random.nextDouble(0.0, 360.0)
-            val x = radius * kotlin.math.cos(Math.toRadians(angle))
-            val y = radius * kotlin.math.sin(Math.toRadians(angle))
-            val earthRadius = 6371000.0
-            val newLat = it.latitude + (y / earthRadius) * (180 / Math.PI)
-            val newLng = it.longitude + (x / earthRadius) * (180 / Math.PI) / kotlin.math.cos(it.latitude * Math.PI / 180)
-            LatLng(newLat, newLng)
-        }
-        MarkerData(randomLatLng, title, iconRes)
     }
 }
 
