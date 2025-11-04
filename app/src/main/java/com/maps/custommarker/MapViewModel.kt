@@ -1,9 +1,8 @@
 package com.maps.custommarker
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Application
-import androidx.annotation.RequiresPermission
+import android.location.Location
 import androidx.lifecycle.AndroidViewModel
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.model.LatLng
@@ -13,7 +12,11 @@ import kotlin.random.Random
 
 sealed class MapState {
     object Loading : MapState()
-    data class Success(val userLocation: LatLng, val markers: List<MarkerData>) : MapState()
+    data class Success(
+        val userLocation: LatLng,
+        val markers: List<MarkerData>,
+        val selectedMarker: MarkerData? = null
+    ) : MapState()
     object Error : MapState()
 }
 
@@ -25,7 +28,6 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
     @SuppressLint("MissingPermission")
     private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
 
-    @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION])
     fun onPermissionGranted() {
         fusedLocationClient.lastLocation.addOnSuccessListener { location ->
             if (location != null) {
@@ -41,6 +43,20 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onPermissionDenied() {
         _state.value = MapState.Error
+    }
+
+    fun onMarkerSelected(marker: MarkerData) {
+        val currentState = _state.value
+        if (currentState is MapState.Success) {
+            _state.value = currentState.copy(selectedMarker = marker)
+        }
+    }
+
+    fun onBottomSheetDismissed() {
+        val currentState = _state.value
+        if (currentState is MapState.Success) {
+            _state.value = currentState.copy(selectedMarker = null)
+        }
     }
 
     private fun generateRandomMarkers(center: LatLng) {
@@ -63,8 +79,15 @@ class MapViewModel(application: Application) : AndroidViewModel(application) {
                 val newLng = it.longitude + (x / earthRadius) * (180 / Math.PI) / kotlin.math.cos(it.latitude * Math.PI / 180)
                 LatLng(newLat, newLng)
             }
-            MarkerData(randomLatLng, title, iconRes)
+            val distance = calculateDistance(center, randomLatLng)
+            MarkerData(randomLatLng, title, iconRes, "10% off after 9:00 PM", distance)
         }
         _state.value = MapState.Success(center, markers)
+    }
+
+    private fun calculateDistance(start: LatLng, end: LatLng): Float {
+        val results = FloatArray(1)
+        Location.distanceBetween(start.latitude, start.longitude, end.latitude, end.longitude, results)
+        return results[0] / 1609.34f // convert to miles
     }
 }
